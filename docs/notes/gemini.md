@@ -17,7 +17,7 @@ from langroid.embedding_models import GeminiEmbeddingsConfig
 # Configure Gemini embeddings
 embed_cfg = GeminiEmbeddingsConfig(
     model_type="gemini",
-    model_name="models/text-embedding-004",
+    model_name="gemini-embedding-001",
     dims=768,
 )
 

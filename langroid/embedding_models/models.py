@@ -102,7 +102,9 @@ class LlamaCppServerEmbeddingsConfig(EmbeddingModelsConfig):
 
 class GeminiEmbeddingsConfig(EmbeddingModelsConfig):
     model_type: str = "gemini"
-    model_name: str = "models/text-embedding-004"
+    # text-embedding-004 was shut down on 2026-01-14. gemini-embedding-001 returns
+    # one embedding per input and honors `dims` via output_dimensionality.
+    model_name: str = "gemini-embedding-001"
     api_key: str = ""
     dims: int = 768
     batch_size: int = 512
@@ -566,6 +568,14 @@ class LlamaCppServerEmbeddings(EmbeddingModel):
         return self.config.dims
 
 
+GEMINI_NATIVE_EMBEDDING_DIMS = 3072
+
+
+def _l2_normalized(values: List[float]) -> List[float]:
+    norm = sum(v * v for v in values) ** 0.5
+    return [v / norm for v in values] if norm else list(values)
+
+
 class GeminiEmbeddings(EmbeddingModel):
     def __init__(self, config: GeminiEmbeddingsConfig = GeminiEmbeddingsConfig()):
         try:
@@ -588,12 +598,18 @@ class GeminiEmbeddings(EmbeddingModel):
 
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Generates embeddings for a list of input texts."""
+        from google.genai import types
+
         all_embeddings: List[List[float]] = []
+        request_config = types.EmbedContentConfig(
+            output_dimensionality=self.config.dims
+        )
 
         for batch in batched(texts, self.config.batch_size):
             result = self.client.models.embed_content(  # type: ignore[attr-defined]
                 model=self.config.model_name,
                 contents=batch,  # type: ignore
+                config=request_config,
             )
 
             if not hasattr(result, "embeddings") or not isinstance(
@@ -608,7 +624,11 @@ class GeminiEmbeddings(EmbeddingModel):
                 [emb.values for emb in result.embeddings]  # type: ignore
             )
 
-        return all_embeddings
+        if self.config.dims == GEMINI_NATIVE_EMBEDDING_DIMS:
+            return all_embeddings
+        # Truncated gemini-embedding-001 vectors are not unit length; Google asks
+        # callers to normalize them for cosine/dot-product similarity.
+        return [_l2_normalized(emb) for emb in all_embeddings]
 
     @property
     def embedding_dims(self) -> int:
